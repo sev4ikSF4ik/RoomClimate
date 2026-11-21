@@ -79,6 +79,33 @@ docker compose up --build
 dotnet test
 ```
 
+### Звіт про покриття коду
+
+Покриття збирає [coverlet](https://github.com/coverlet-coverage/coverlet), HTML-звіт будує
+[ReportGenerator](https://github.com/danielpalme/ReportGenerator) (підключений як локальний інструмент у `dotnet-tools.json`).
+
+```bash
+dotnet tool restore
+dotnet test --collect:"XPlat Code Coverage" --results-directory TestResults
+dotnet reportgenerator -reports:"TestResults/**/coverage.cobertura.xml" -targetdir:coverage -reporttypes:"Html;TextSummary"
+```
+
+Після цього відкрийте `coverage/index.html` у браузері.
+
+У CI звіт будується автоматично: **Actions → останній запуск → Summary** (таблиця покриття)
+і архів `coverage-report` у розділі Artifacts.
+
+Поточний результат (бібліотека `RoomClimate.Core` — уся логіка аналізу):
+
+| Метрика | Значення |
+|---|---|
+| Покриття рядків | 91.6 % (99 з 108) |
+| Покриття гілок | 84.1 % (69 з 82) |
+| Покриття методів | 78.5 % (33 з 42) |
+
+Модульні тести покривають бібліотеку Core. API та симулятор поки перевіряються вручну;
+інтеграційні тести API — у планах.
+
 ## REST API
 
 | Метод | Шлях | Опис |

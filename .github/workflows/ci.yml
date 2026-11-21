@@ -20,3 +20,25 @@ jobs:
       - run: dotnet restore
       - run: dotnet build --no-restore -c Release
       - run: dotnet test --no-build -c Release --verbosity normal
+
+  coverage:
+    # Звіт про покриття коду тестами (coverlet + ReportGenerator)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet tool restore
+      - run: dotnet test -c Release --collect:"XPlat Code Coverage" --results-directory TestResults
+      - run: >
+          dotnet reportgenerator
+          -reports:"TestResults/**/coverage.cobertura.xml"
+          -targetdir:coverage
+          -reporttypes:"Html;MarkdownSummaryGithub;TextSummary"
+      - name: Coverage summary
+        run: cat coverage/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage

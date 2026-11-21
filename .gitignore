@@ -9,3 +9,4 @@ data/
 .vscode/
 *.user
 TestResults/
+coverage/
