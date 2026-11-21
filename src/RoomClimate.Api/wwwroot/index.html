@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RoomClimate — моніторинг мікроклімату</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --text:#1d2330; --muted:#6b7280; --ok:#16a34a; --warn:#d97706; --bad:#dc2626; --accent:#2563eb; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111418; --card:#1b2028; --text:#e6e8eb; --muted:#9aa3af; } }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:16px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+  h1 { font-size:20px; margin:0; }
+  .muted { color:var(--muted); font-size:13px; }
+  main { padding:0 24px 24px; display:grid; gap:16px; }
+  .rooms { display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:16px; }
+  .card { background:var(--card); border-radius:12px; padding:16px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+  .room { cursor:pointer; border:2px solid transparent; }
+  .room.active { border-color:var(--accent); }
+  .room h3 { margin:0 0 8px; font-size:16px; }
+  .metrics { display:grid; grid-template-columns:repeat(3,1fr); gap:4px; font-variant-numeric:tabular-nums; }
+  .metrics b { display:block; font-size:20px; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; color:#fff; }
+  .ok { background:var(--ok); } .warn { background:var(--warn); } .bad { background:var(--bad); }
+  .grid2 { display:grid; grid-template-columns:2fr 1fr; gap:16px; }
+  @media (max-width: 800px) { .grid2 { grid-template-columns:1fr; } header, main { padding-left:16px; padding-right:16px; } }
+  ul { margin:8px 0 0; padding-left:18px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  td { padding:6px 4px; border-bottom:1px solid rgba(127,127,127,.2); }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>RoomClimate</h1>
+    <div class="muted">Інтелектуальний моніторинг мікроклімату приміщень</div>
+  </div>
+  <div class="muted" id="server"></div>
+</header>
+<main>
+  <section class="rooms" id="rooms"><div class="muted">Очікування даних від сенсорів…</div></section>
+  <section class="grid2">
+    <div class="card">
+      <h3 id="chartTitle">Динаміка за 30 хв</h3>
+      <canvas id="chart" height="120"></canvas>
+    </div>
+    <div class="card" id="summary"><h3>Аналіз</h3><div class="muted">Оберіть приміщення</div></div>
+  </section>
+  <section class="card">
+    <h3>Останні сповіщення</h3>
+    <table id="alerts"></table>
+  </section>
+</main>
+<script>
+let selected = null, chart = null;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const cls = i => i >= 80 ? 'ok' : i >= 50 ? 'warn' : 'bad';
+const lvlCls = l => l === 'Critical' ? 'bad' : l === 'Warning' ? 'warn' : 'ok';
+const get = u => fetch(u).then(r => r.json());
+
+async function loadHealth() {
+  const h = await get('/api/health');
+  document.getElementById('server').textContent = `${h.os} · ${h.framework}`;
+}
+
+async function loadRooms() {
+  const latest = await get('/api/readings/latest');
+  if (!latest.length) return;
+  if (!selected) selected = latest[0].room;
+  document.getElementById('rooms').innerHTML = latest.map(r => `
+    <div class="card room ${r.room === selected ? 'active' : ''}" data-room="${esc(r.room)}">
+      <h3>${esc(r.room)} <span class="badge ${cls(r.comfortIndex)}">${r.comfortIndex}</span></h3>
+      <div class="metrics">
+        <div><b>${r.temperatureC.toFixed(1)}°</b><span class="muted">темп.</span></div>
+        <div><b>${r.humidityPercent.toFixed(0)}%</b><span class="muted">волог.</span></div>
+        <div><b>${r.co2Ppm.toFixed(0)}</b><span class="muted">CO₂ ppm</span></div>
+      </div>
+    </div>`).join('');
+  document.querySelectorAll('.room').forEach(el => el.onclick = () => { selected = el.dataset.room; refresh(); });
+}
+
+async function loadSelected() {
+  if (!selected) return;
+  const room = encodeURIComponent(selected);
+  const [data, s] = await Promise.all([get(`/api/rooms/${room}/readings?minutes=30`), get(`/api/rooms/${room}/summary?minutes=30`)]);
+  document.getElementById('chartTitle').textContent = `${selected}: динаміка за 30 хв`;
+  const labels = data.map(d => new Date(d.timestamp).toLocaleTimeString());
+  const ds = [
+    { label:'Температура, °C', data:data.map(d => d.temperatureC), yAxisID:'y', borderColor:'#ef4444', tension:.3, pointRadius:0 },
+    { label:'Вологість, %', data:data.map(d => d.humidityPercent), yAxisID:'y', borderColor:'#3b82f6', tension:.3, pointRadius:0 },
+    { label:'CO₂, ppm', data:data.map(d => d.co2Ppm), yAxisID:'y2', borderColor:'#10b981', tension:.3, pointRadius:0 },
+  ];
+  if (!chart) {
+    chart = new Chart(document.getElementById('chart'), { type:'line', data:{ labels, datasets:ds },
+      options:{ animation:false, interaction:{ mode:'index', intersect:false },
+        scales:{ y:{ position:'left' }, y2:{ position:'right', grid:{ drawOnChartArea:false } } } } });
+  } else { chart.data.labels = labels; chart.data.datasets.forEach((d, i) => d.data = ds[i].data); chart.update(); }
+
+  const trend = { rising:'зростає ↑', falling:'спадає ↓', stable:'стабільний →' }[s.trend];
+  document.getElementById('summary').innerHTML = `
+    <h3>Аналіз: ${esc(s.room)}</h3>
+    <div>Індекс комфорту: <span class="badge ${cls(s.comfortIndex)}">${s.comfortIndex}/100 · ${s.comfort}</span></div>
+    <p class="muted">Середнє за 30 хв (${s.count} вимірів): ${s.avgTemperatureC}°C, ${s.avgHumidityPercent}%, ${s.avgCo2Ppm} ppm. Тренд CO₂: ${trend}</p>
+    <b>Рекомендації</b><ul>${s.recommendations.map(r => `<li>${esc(r)}</li>`).join('')}</ul>`;
+}
+
+async function loadAlerts() {
+  const a = await get('/api/alerts?limit=15');
+  document.getElementById('alerts').innerHTML = a.length ? a.map(x => `
+    <tr><td>${new Date(x.timestamp).toLocaleTimeString()}</td><td>${esc(x.room)}</td>
+    <td><span class="badge ${lvlCls(x.level)}">${x.level}</span></td><td>${esc(x.message)} (${x.value})</td></tr>`).join('')
+    : '<tr><td class="muted">Сповіщень немає</td></tr>';
+}
+
+async function refresh() {
+  try { await loadRooms(); await Promise.all([loadSelected(), loadAlerts()]); } catch (e) { console.error(e); }
+}
+loadHealth(); refresh(); setInterval(refresh, 3000);
+</script>
+</body>
+</html>
