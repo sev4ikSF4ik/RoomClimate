@@ -1,0 +1,16 @@
+services:
+  api:
+    build: { context: ., target: api }
+    ports: ["5080:5080"]
+    volumes: ["climate-data:/data"]
+
+  simulator:
+    build: { context: ., target: simulator }
+    environment:
+      API_URL: http://api:5080
+      ROOMS: "Аудиторія 101,Аудиторія 202,Лабораторія 305"
+    depends_on: [api]
+    restart: on-failure
+
+volumes:
+  climate-data:
